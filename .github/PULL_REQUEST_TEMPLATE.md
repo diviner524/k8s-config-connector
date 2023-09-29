@@ -21,8 +21,9 @@ Fixes #
 
 Make sure you have run "make ready-pr" to run required tests and ensure this PR is ready to review. 
 
-Also if possible, share a bit more on the tests you have done. For example if you have updated the pubsubtopic sample
-you can share the test logs from running the test case locally.
+Also if possible, share a bit more on the tests you have done. 
+
+For example if you have updated the pubsubtopic sample, you can share the test logs from running the test case locally.
 
 go test -v -tags=integration ./config/tests/samples/create -test.run TestAll -run-tests pubsubtopic
 
