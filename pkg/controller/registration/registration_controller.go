@@ -20,16 +20,14 @@ import (
 	"sync"
 	"time"
 
-	dclcontroller "github.com/GoogleCloudPlatform/k8s-config-connector/pkg/controller/dcl"
 	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/controller/deletiondefender"
 	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/controller/gsakeysecretgenerator"
 	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/controller/iam/auditconfig"
 	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/controller/iam/partialpolicy"
 	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/controller/iam/policy"
 	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/controller/iam/policymember"
-	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/controller/tf"
+	op "github.com/GoogleCloudPlatform/k8s-config-connector/pkg/controller/op"
 	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/controller/unmanageddetector"
-	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/crd/crdgeneration"
 	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/dcl/conversion"
 	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/k8s"
 	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/servicemapping/servicemappingloader"
@@ -180,24 +178,35 @@ func RegisterDefaultController(r *ReconcileRegistration, crd *apiextensions.Cust
 			return nil, err
 		}
 	default:
-		// register controllers for dcl-based CRDs
-		if val, ok := crd.Labels[k8s.DCL2CRDLabel]; ok && val == "true" {
-			su, err := dclcontroller.Add(r.mgr, crd, r.dclConverter, r.dclConfig, r.smLoader)
+		// register controllers for oneplatform based CRDs with label K8s.OP2CRDLabel
+		if val, ok := crd.Labels[k8s.OP2CRDLabel]; ok && val == "true" {
+			su, err := op.Add(r.mgr, crd, r.provider, r.smLoader)
 			if err != nil {
-				return nil, fmt.Errorf("error adding dcl controller for %v to a manager: %v", crd.Spec.Names.Kind, err)
+				return nil, fmt.Errorf("error adding op controller for %v to a manager: %v", crd.Spec.Names.Kind, err)
 			}
 			return su, nil
 		}
-		// register controllers for tf-based CRDs
-		if val, ok := crd.Labels[crdgeneration.TF2CRDLabel]; !ok || val != "true" {
-			logger.Info("unrecognized CRD; skipping controller registration", "group", gvk.Group, "version", gvk.Version, "kind", gvk.Kind)
-			return nil, nil
-		}
-		su, err := tf.Add(r.mgr, crd, r.provider, r.smLoader)
-		if err != nil {
-			return nil, fmt.Errorf("error adding terraform controller for %v to a manager: %v", crd.Spec.Names.Kind, err)
-		}
-		schemaUpdater = su
+
+		/*
+			// register controllers for dcl-based CRDs
+			if val, ok := crd.Labels[k8s.DCL2CRDLabel]; ok && val == "true" {
+				su, err := dclcontroller.Add(r.mgr, crd, r.dclConverter, r.dclConfig, r.smLoader)
+				if err != nil {
+					return nil, fmt.Errorf("error adding dcl controller for %v to a manager: %v", crd.Spec.Names.Kind, err)
+				}
+				return su, nil
+			}
+			// register controllers for tf-based CRDs
+			if val, ok := crd.Labels[crdgeneration.TF2CRDLabel]; !ok || val != "true" {
+				logger.Info("unrecognized CRD; skipping controller registration", "group", gvk.Group, "version", gvk.Version, "kind", gvk.Kind)
+				return nil, nil
+			}
+			su, err := tf.Add(r.mgr, crd, r.provider, r.smLoader)
+			if err != nil {
+				return nil, fmt.Errorf("error adding terraform controller for %v to a manager: %v", crd.Spec.Names.Kind, err)
+			}
+			schemaUpdater = su
+		*/
 		// register the controller to automatically create secrets for GSA keys
 		if isServiceAccountKeyCRD(crd) {
 			logger.Info("registering the GSA-Key-to-Secret generation controller")
