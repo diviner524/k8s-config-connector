@@ -1,0 +1,8 @@
+apiVersion: infra.sample.org/v1alpha1
+kind: PubSub
+metadata:
+  name: pubsub-sample
+spec:
+  # Add fields here
+  location: us-central1
+  pubSubPrefix: dltest01

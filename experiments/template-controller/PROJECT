@@ -1,0 +1,7 @@
+domain: cnrm.cloud.google.com
+repo: template-controller
+resources:
+- group: experiments
+  kind: Template
+  version: v1alpha1
+version: "2"

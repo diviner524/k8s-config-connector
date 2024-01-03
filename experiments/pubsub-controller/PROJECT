@@ -1,0 +1,7 @@
+domain: sample.org
+repo: pubsub-controller
+resources:
+- group: infra
+  kind: PubSub
+  version: v1alpha1
+version: "2"

@@ -1,0 +1,24 @@
+# permissions for end users to edit pubsubs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pubsub-editor-role
+rules:
+- apiGroups:
+  - infra.sample.org
+  resources:
+  - pubsubs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - infra.sample.org
+  resources:
+  - pubsubs/status
+  verbs:
+  - get
