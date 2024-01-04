@@ -37,6 +37,7 @@ resources:
       metadata:
         name: "{{root.spec.pubSubPrefix}}-configmap"
       data:
-        subscriptionTTL: "{{resource-subscription.spec.expirationPolicy.ttl}}"
+        location: "{{root.spec.location}}"
+        observedGeneration: "{{resource-subscription.status.observedGeneration}}"
     dependsOn:
       - resource-subscription
