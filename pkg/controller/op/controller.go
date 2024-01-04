@@ -29,13 +29,10 @@ import (
 	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/controller/resourceactuation"
 	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/execution"
 	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/k8s"
-	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/krmtotf"
-	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/lease/leaser"
 	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/runtime"
 	"github.com/GoogleCloudPlatform/k8s-config-connector/pkg/servicemapping/servicemappingloader"
 
 	"github.com/go-logr/logr"
-	tfschema "github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"golang.org/x/sync/semaphore"
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -56,25 +53,23 @@ var logger = klog.Log
 type Reconciler struct {
 	lifecyclehandler.LifecycleHandler
 	metrics.ReconcilerMetrics
-	resourceLeaser *leaser.ResourceLeaser
-	mgr            manager.Manager
-	schemaRef      *k8s.SchemaReference
-	schemaRefMu    sync.RWMutex
-	provider       *tfschema.Provider
-	smLoader       *servicemappingloader.ServiceMappingLoader
-	logger         logr.Logger
+	mgr         manager.Manager
+	schemaRef   *k8s.SchemaReference
+	schemaRefMu sync.RWMutex
+	smLoader    *servicemappingloader.ServiceMappingLoader
+	logger      logr.Logger
 	// Fields used for triggering reconciliations when dependencies are ready
 	immediateReconcileRequests chan event.GenericEvent
 	resourceWatcherRoutines    *semaphore.Weighted // Used to cap number of goroutines watching unready dependencies
 }
 
-func Add(mgr manager.Manager, crd *apiextensions.CustomResourceDefinition, provider *tfschema.Provider, smLoader *servicemappingloader.ServiceMappingLoader) (k8s.SchemaReferenceUpdater, error) {
+func Add(mgr manager.Manager, crd *apiextensions.CustomResourceDefinition, smLoader *servicemappingloader.ServiceMappingLoader) (k8s.SchemaReferenceUpdater, error) {
 	kind := crd.Spec.Names.Kind
 	apiVersion := k8s.GetAPIVersionFromCRD(crd)
 	controllerName := fmt.Sprintf("%v-controller", strings.ToLower(kind))
 	immediateReconcileRequests := make(chan event.GenericEvent, k8s.ImmediateReconcileRequestsBufferSize)
 	resourceWatcherRoutines := semaphore.NewWeighted(k8s.MaxNumResourceWatcherRoutines)
-	r, err := NewReconciler(mgr, crd, provider, smLoader, immediateReconcileRequests, resourceWatcherRoutines)
+	r, err := NewReconciler(mgr, crd, smLoader, immediateReconcileRequests, resourceWatcherRoutines)
 	if err != nil {
 		return nil, err
 	}
@@ -98,15 +93,14 @@ func Add(mgr manager.Manager, crd *apiextensions.CustomResourceDefinition, provi
 	return r, nil
 }
 
-func NewReconciler(mgr manager.Manager, crd *apiextensions.CustomResourceDefinition, p *tfschema.Provider, smLoader *servicemappingloader.ServiceMappingLoader, immediateReconcileRequests chan event.GenericEvent, resourceWatcherRoutines *semaphore.Weighted) (*Reconciler, error) {
+func NewReconciler(mgr manager.Manager, crd *apiextensions.CustomResourceDefinition, smLoader *servicemappingloader.ServiceMappingLoader, immediateReconcileRequests chan event.GenericEvent, resourceWatcherRoutines *semaphore.Weighted) (*Reconciler, error) {
 	controllerName := fmt.Sprintf("%v-controller", strings.ToLower(crd.Spec.Names.Kind))
 	return &Reconciler{
 		LifecycleHandler: lifecyclehandler.NewLifecycleHandler(
 			mgr.GetClient(),
 			mgr.GetEventRecorderFor(controllerName),
 		),
-		resourceLeaser: leaser.NewResourceLeaser(p, smLoader, mgr.GetClient()),
-		mgr:            mgr,
+		mgr: mgr,
 		schemaRef: &k8s.SchemaReference{
 			CRD:        crd,
 			JsonSchema: k8s.GetOpenAPIV3SchemaFromCRD(crd),
@@ -119,7 +113,6 @@ func NewReconciler(mgr manager.Manager, crd *apiextensions.CustomResourceDefinit
 		ReconcilerMetrics: metrics.ReconcilerMetrics{
 			ResourceNameLabel: metrics.ResourceNameLabel,
 		},
-		provider:                   p,
 		smLoader:                   smLoader,
 		logger:                     logger.WithName(controllerName),
 		immediateReconcileRequests: immediateReconcileRequests,
@@ -154,19 +147,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (res 
 		r.logger.Info("Skipping reconcile as nothing has changed and 0 reconcile period is set", "resource", req.NamespacedName)
 		return reconcile.Result{}, nil
 	}
-	sm, err := r.smLoader.GetServiceMapping(u.GroupVersionKind().Group)
-	if err != nil {
-		return reconcile.Result{}, err
-	}
 	u, err = k8s.TriggerManagedFieldsMetadata(ctx, r.Client, u)
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("error triggering Server-Side Apply (SSA) metadata: %w", err)
 	}
 	cvt := runtime.NewConverter(u.GetKind())
-	resource, err := krmtotf.NewResource(u, sm, r.provider)
-	if err != nil {
-		return reconcile.Result{}, fmt.Errorf("could not parse resource %s: %v", req.NamespacedName.String(), err)
-	}
 
 	requeue, err := r.sync(ctx, u, cvt)
 	if err != nil {
@@ -179,7 +164,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (res 
 	if err != nil {
 		return reconcile.Result{}, err
 	}
-	r.logger.Info("successfully finished reconcile", "resource", k8s.GetNamespacedName(resource), "time to next reconciliation", jitteredPeriod)
+	r.logger.Info("successfully finished reconcile", "resource", req.NamespacedName, "time to next reconciliation", jitteredPeriod)
 	return reconcile.Result{RequeueAfter: jitteredPeriod}, nil
 }
 
@@ -195,10 +180,10 @@ func (r *Reconciler) sync(ctx context.Context, u *unstructured.Unstructured, cvt
 				"resource", k8s.GetNamespacedName(u))
 			return false, nil
 		}
-		if k8s.HasFinalizer(u, k8s.DeletionDefenderFinalizerName) {
-			r.logger.Info("deletion defender has not yet been finalized; requeuing", "resource", k8s.GetNamespacedName(u))
-			return true, nil
-		}
+		//if k8s.HasFinalizer(u, k8s.DeletionDefenderFinalizerName) {
+		//	r.logger.Info("deletion defender has not yet been finalized; requeuing", "resource", k8s.GetNamespacedName(u))
+		//	return true, nil
+		//}
 		if err := r.HandleDeleting(ctx, krmResource); err != nil {
 			return false, err
 		}
@@ -224,12 +209,13 @@ func (r *Reconciler) sync(ctx context.Context, u *unstructured.Unstructured, cvt
 	}
 	remoteObj, _ := cvt.GetResource(ctx, u)
 	// ensure the finalizers before apply
-	if err := r.EnsureFinalizers(ctx, krmResource, krmResource, k8s.ControllerFinalizerName, k8s.DeletionDefenderFinalizerName); err != nil {
+	newKrmResource, _ := k8s.NewResource(u)
+	if err := r.EnsureFinalizers(ctx, krmResource, newKrmResource, k8s.ControllerFinalizerName, k8s.DeletionDefenderFinalizerName); err != nil {
 		return false, err
 	}
 	if remoteObj == nil {
-		r.logger.Info("creating/updating underlying resource", "resource", k8s.GetNamespacedName(krmResource))
-		if err := r.HandleUpdating(ctx, krmResource); err != nil {
+		r.logger.Info("creating/updating underlying resource", "resource", k8s.GetNamespacedName(newKrmResource))
+		if err := r.HandleUpdating(ctx, newKrmResource); err != nil {
 			return false, err
 		}
 		// Create the resource through converter cvt
@@ -242,21 +228,21 @@ func (r *Reconciler) sync(ctx context.Context, u *unstructured.Unstructured, cvt
 			return false, err
 		}
 		if diff {
-			r.logger.Info("creating/updating underlying resource", "resource", k8s.GetNamespacedName(krmResource))
-			if err := r.HandleUpdating(ctx, krmResource); err != nil {
+			r.logger.Info("creating/updating underlying resource", "resource", k8s.GetNamespacedName(newKrmResource))
+			if err := r.HandleUpdating(ctx, newKrmResource); err != nil {
 				return false, err
 			}
 			// Update the resource through converter cvt
 			remoteObj, err = cvt.UpdateResource(ctx, u)
-			krmResource, _ = k8s.NewResource(remoteObj)
+			newKrmResource, _ = k8s.NewResource(remoteObj)
 			if err != nil {
 				return false, err
 			}
 		} else {
-			r.logger.Info("underlying resource already up to date", "resource", k8s.GetNamespacedName(krmResource))
+			r.logger.Info("underlying resource already up to date", "resource", k8s.GetNamespacedName(newKrmResource))
 		}
 	}
-	return false, r.HandleUpToDate(ctx, krmResource)
+	return false, r.HandleUpToDate(ctx, newKrmResource)
 }
 
 var _ k8s.SchemaReferenceUpdater = &Reconciler{}

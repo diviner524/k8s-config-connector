@@ -180,7 +180,7 @@ func RegisterDefaultController(r *ReconcileRegistration, crd *apiextensions.Cust
 	default:
 		// register controllers for oneplatform based CRDs with label K8s.OP2CRDLabel
 		if val, ok := crd.Labels[k8s.OP2CRDLabel]; ok && val == "true" {
-			su, err := op.Add(r.mgr, crd, r.provider, r.smLoader)
+			su, err := op.Add(r.mgr, crd, r.smLoader)
 			if err != nil {
 				return nil, fmt.Errorf("error adding op controller for %v to a manager: %v", crd.Spec.Names.Kind, err)
 			}

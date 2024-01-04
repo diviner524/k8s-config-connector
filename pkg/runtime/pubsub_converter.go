@@ -126,6 +126,9 @@ func (c *PubSubConverter) UpdateResource(ctx context.Context, obj *unstructured.
 
 	krmObj := sdkToKRMObj(&updatedConfig, strongTypeObj)
 
+	// Retain the ResourceID
+	krmObj.Spec.ResourceID = topicID
+
 	us, err := toUnstructured(krmObj)
 
 	return us, err
@@ -243,7 +246,7 @@ func convertToTopicConfigToUpdate(config pubsub.TopicConfig) pubsub.TopicConfigT
 	}
 
 	if config.RetentionDuration != 0 {
-		updateConfig.RetentionDuration = &config.RetentionDuration
+		updateConfig.RetentionDuration = config.RetentionDuration
 	}
 
 	// Add other fields as necessary
@@ -262,6 +265,8 @@ func toUnstructured(obj runtime.Object) (*unstructured.Unstructured, error) {
 }
 
 // sdkToKRMObj() takes object of type pubsub.TopicConfig and convert it to type v1beta1.PubSubTopic and return it
+// TODO: We will need to retain the original values specified by users when converting back to KRM obj. For example
+// if users have specied "1h", we should not write "3600s" back to KRM obj, although technically they are the same.
 func sdkToKRMObj(sdkObj *pubsub.TopicConfig, strongTypeObject *v1beta1.PubSubTopic) *v1beta1.PubSubTopic {
 	// Create a new v1beta1.PubSubTopic object
 	krmObj := &v1beta1.PubSubTopic{}
@@ -273,9 +278,12 @@ func sdkToKRMObj(sdkObj *pubsub.TopicConfig, strongTypeObject *v1beta1.PubSubTop
 	if sdkObj.KMSKeyName != "" {
 		krmObj.Spec.KmsKeyRef.External = sdkObj.KMSKeyName
 	}
-	krmObj.Spec.MessageStoragePolicy = &v1beta1.TopicMessageStoragePolicy{
-		AllowedPersistenceRegions: sdkObj.MessageStoragePolicy.AllowedPersistenceRegions,
+	if sdkObj.MessageStoragePolicy.AllowedPersistenceRegions != nil && len(sdkObj.MessageStoragePolicy.AllowedPersistenceRegions) > 0 {
+		krmObj.Spec.MessageStoragePolicy = &v1beta1.TopicMessageStoragePolicy{
+			AllowedPersistenceRegions: sdkObj.MessageStoragePolicy.AllowedPersistenceRegions,
+		}
 	}
+
 	if sdkObj.SchemaSettings != nil {
 		encoding := schemaEncodingToString(sdkObj.SchemaSettings.Encoding)
 		krmObj.Spec.SchemaSettings.Encoding = &encoding
