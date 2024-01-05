@@ -37,7 +37,10 @@ resources:
       metadata:
         name: "{{root.spec.pubSubPrefix}}-configmap"
       data:
+        topicName: "{{resource-topic.metadata.name}}"
+        subName: "{{resource-subscription.metadata.name}}"
         location: "{{root.spec.location}}"
         observedGeneration: "{{resource-subscription.status.observedGeneration}}"
     dependsOn:
+      - resource-topic
       - resource-subscription
